@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CubemapReplacementsConfig>
+  <CubemapReplacements>
+    <CubemapReplacement code="example_sunrise" description="Example Sunrise Skybox" file_prefix="Textures/sunrise_" />
+    <CubemapReplacement code="example_day" description="Example Day Skybox" file_prefix="Textures/day_" />
+    <CubemapReplacement code="example_sunset" description="Example Sunset Skybox" file_prefix="Textures/sunset_" />
+    <CubemapReplacement code="example_night" description="Example Night Skybox" file_prefix="Textures/night_" />
+  </CubemapReplacements>
+</CubemapReplacementsConfig>
