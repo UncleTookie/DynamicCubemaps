@@ -26,7 +26,7 @@ Click **Reload Cubemaps** if you add or edit cubemap files while the game is run
 
 Dynamic Cubemaps has three night behavior modes:
 
-- **Default**: Uses the selected night cubemap with the map theme's normal nighttime horizon haze and fog colors. Lighter haze colors appear more opaque, while darker colors let more of the map theme's outer-space texture show through.
+- **Default**: Uses the selected night cubemap with the map theme's normal nighttime horizon haze and fog colors.
 - **Disable horizon haze at night**: Uses the selected night cubemap, but replaces the map theme's nighttime haze and fog colors with darker neutral tones. This can help when the night cubemap and map theme colors do not match.
 - **Use vanilla mode at night**: Restores the vanilla night sky and disables custom night cubemap styling.
 
