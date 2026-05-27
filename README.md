@@ -11,7 +11,7 @@ The mod uses the game's current time period to swap the active cubemap automatic
 
 ## Using Dynamic Cubemaps
 
-Open the game options for **Dynamic Cubemaps** and choose a cubemap for each slot:
+Open the main options in-game and select **Dynamic Cubemaps** from the sidebar. Choose a cubemap for each slot:
 
 - Sunrise Cubemap
 - Day Cubemap
