@@ -17,18 +17,18 @@ namespace DynamicCubemaps
         private const float RowHeight = 44f;
         private const float ButtonGap = 8f;
         private const float Width = 730f;
-        private static Options _instance;
+        private static Options instance;
 
         public static Options Current
         {
             get
             {
-                if (_instance == null)
+                if (instance == null)
                 {
-                    _instance = Load();
+                    instance = Load();
                 }
 
-                return _instance;
+                return instance;
             }
         }
 
@@ -93,42 +93,41 @@ namespace DynamicCubemaps
             var night = Current.NightCubemap;
             var useVanillaNight = Current.UseVanillaNight;
             var fixNightHaze = Current.FixNightHaze && !useVanillaNight;
-            var cubemaps = CubemapManager.GetCubemaps();
 
-            var sunriseDropdown = Dropdown(
+            Dropdown(
                 leftColumn,
                 "Sunrise Cubemap",
-                cubemaps,
+                CubemapManager.GetSunriseCubemaps(),
                 Current.SunriseCubemap,
                 value =>
                 {
                     sunrise = value;
                 });
 
-            var dayDropdown = Dropdown(
+            Dropdown(
                 rightColumn,
                 "Day Cubemap",
-                cubemaps,
+                CubemapManager.GetDayCubemaps(),
                 Current.DayCubemap,
                 value =>
                 {
                     day = value;
                 });
 
-            var sunsetDropdown = Dropdown(
+            Dropdown(
                 leftColumn,
                 "Sunset Cubemap",
-                cubemaps,
+                CubemapManager.GetSunsetCubemaps(),
                 Current.SunsetCubemap,
                 value =>
                 {
                     sunset = value;
                 });
 
-            var nightDropdown = Dropdown(
+            Dropdown(
                 rightColumn,
                 "Night Cubemap",
-                cubemaps,
+                CubemapManager.GetNightCubemaps(),
                 Current.NightCubemap,
                 value =>
                 {
@@ -200,65 +199,29 @@ namespace DynamicCubemaps
             actions.AddButton("Reload Cubemaps", () =>
             {
                 CubemapController.ReloadCubemaps();
-                cubemaps = CubemapManager.GetCubemaps();
-                UpdateDropdown(sunriseDropdown, cubemaps, sunrise);
-                UpdateDropdown(dayDropdown, cubemaps, day);
-                UpdateDropdown(sunsetDropdown, cubemaps, sunset);
-                UpdateDropdown(nightDropdown, cubemaps, night);
                 LoadingExtension.RefreshCubemaps();
             });
         }
 
-        private static CubemapDropdown Dropdown(UIHelperBase group, string label, CubemapOption[] options, string selectedCode, Action<string> onChanged)
+        private static void Dropdown(UIHelperBase group, string label, CubemapOption[] options, string selectedCode, Action<string> onChanged)
         {
-            var dropdown = new CubemapDropdown
-            {
-                OnChanged = onChanged,
-            };
+            var codes = options.Select(option => option.Code).ToArray();
+            var descriptions = options.Select(option => option.Description).ToArray();
+            var index = Array.IndexOf(codes, selectedCode);
 
-            SetDropdownOptions(dropdown, options, selectedCode);
-            dropdown.Control = group.AddDropdown(label, dropdown.Descriptions, dropdown.Index, selected =>
+            if (index < 0)
             {
-                if (selected >= 0 && selected < dropdown.Codes.Length)
+                index = 0;
+                onChanged(codes[index]);
+            }
+
+            group.AddDropdown(label, descriptions, index, selected =>
+            {
+                if (selected >= 0 && selected < codes.Length)
                 {
-                    dropdown.OnChanged(dropdown.Codes[selected]);
+                    onChanged(codes[selected]);
                 }
-            }) as UIDropDown;
-
-            return dropdown;
-        }
-
-        private static void UpdateDropdown(CubemapDropdown dropdown, CubemapOption[] options, string selectedCode)
-        {
-            SetDropdownOptions(dropdown, options, selectedCode);
-
-            if (dropdown.Control != null)
-            {
-                dropdown.Control.items = dropdown.Descriptions;
-                dropdown.Control.selectedIndex = dropdown.Index;
-            }
-        }
-
-        private static void SetDropdownOptions(CubemapDropdown dropdown, CubemapOption[] options, string selectedCode)
-        {
-            dropdown.Codes = options.Select(option => option.Code).ToArray();
-            dropdown.Descriptions = options.Select(option => option.Description).ToArray();
-            dropdown.Index = Array.IndexOf(dropdown.Codes, selectedCode);
-
-            if (dropdown.Index < 0)
-            {
-                dropdown.Index = 0;
-                dropdown.OnChanged(dropdown.Codes[dropdown.Index]);
-            }
-        }
-
-        private class CubemapDropdown
-        {
-            public UIDropDown Control { get; set; }
-            public string[] Codes { get; set; }
-            public string[] Descriptions { get; set; }
-            public int Index { get; set; }
-            public Action<string> OnChanged { get; set; }
+            });
         }
 
         private static Options Load()
@@ -283,7 +246,8 @@ namespace DynamicCubemaps
             }
             catch (Exception e)
             {
-                Debug.LogError("DynamicCubemaps: Error reading options XML file: " + e.Message);
+                Debug.LogError("DynamicCubemaps: Error reading options XML file");
+                Debug.LogException(e);
                 return new Options();
             }
         }
@@ -300,7 +264,7 @@ namespace DynamicCubemaps
             }
             catch (Exception e)
             {
-                Debug.LogError("DynamicCubemaps: Error writing options XML file: " + e.Message);
+                Debug.LogException(e);
             }
         }
 
@@ -309,4 +273,5 @@ namespace DynamicCubemaps
             return Path.Combine(DataLocation.localApplicationData, FileName);
         }
     }
+
 }

@@ -1,4 +1,6 @@
+using System;
 using System.Collections;
+using System.Reflection;
 using ICities;
 using UnityEngine;
 
@@ -8,7 +10,7 @@ namespace DynamicCubemaps
     {
         private GameObject _gameObject;
         private static CubemapMonitor _monitor;
-        public static bool InGame { get; private set; }
+        public static bool InGame = false;
 
         public override void OnLevelLoaded(LoadMode mode)
         {
@@ -21,16 +23,20 @@ namespace DynamicCubemaps
 
             InGame = true;
 
-            CubemapController.Init();
+            CubemapController.Initialize();
+            LuminaFix.Disable();
 
             _gameObject = new GameObject("DynamicCubemaps");
             _gameObject.AddComponent<CubemapMonitor>();
+
+            CubemapController.UpdateCubemaps();
         }
 
         public override void OnLevelUnloading()
         {
             InGame = false;
             CubemapController.Revert();
+            LuminaFix.Restore();
             CubemapManager.ResetCache();
             CubemapController.Release();
             _monitor = null;
@@ -56,39 +62,26 @@ namespace DynamicCubemaps
 
         public class CubemapMonitor : MonoBehaviour
         {
-            private const int SettleFrames = 20;
+            private const float UpdateInterval = 0.1f;
 
-            private int _hour;
-            private CubemapController.DayPeriod _period;
-            private int _settleFrames;
-            private uint _dayTimeOffset;
-            private bool _paused;
+            private float lastTick;
+            private CubemapController.DayPeriod lastPeriod;
+            private string sunrise;
+            private string day;
+            private string sunset;
+            private string night;
+            private bool useVanillaNight;
+            private bool fixNightHaze;
+            private Coroutine preload;
 
             public void Start()
             {
                 _monitor = this;
-                var simulation = SimulationManager.instance;
-                _hour = CubemapController.GetCurrentHour();
-                _period = CubemapController.GetCurrentPeriod();
-                _dayTimeOffset = simulation.m_dayTimeOffsetFrames;
-                _paused = simulation.SimulationPaused;
-                _settleFrames = SettleFrames;
+                Cache();
+                lastPeriod = CubemapController.GetCurrentPeriod();
 
-                StartCoroutine(Startup());
-            }
-
-            public void OnDestroy()
-            {
-                if (_monitor == this)
-                {
-                    _monitor = null;
-                }
-            }
-
-            public void Refresh()
-            {
-                _settleFrames = SettleFrames;
-                CubemapController.UpdateCubemaps(true);
+                CubemapController.UpdateCubemaps();
+                QueuePreload();
             }
 
             public void LateUpdate()
@@ -98,72 +91,151 @@ namespace DynamicCubemaps
                     return;
                 }
 
-                var simulation = SimulationManager.instance;
-                var currentHour = CubemapController.GetCurrentHour();
-                var currentPeriod = CubemapController.GetCurrentPeriod();
-                var currentOffset = simulation.m_dayTimeOffsetFrames;
-                var paused = simulation.SimulationPaused;
-                if (currentHour != _hour ||
-                    currentPeriod != _period ||
-                    currentOffset != _dayTimeOffset ||
-                    paused != _paused)
+                if (Time.time - lastTick < UpdateInterval)
                 {
-                    _hour = currentHour;
-                    _period = currentPeriod;
-                    _dayTimeOffset = currentOffset;
-                    _paused = paused;
-                    _settleFrames = SettleFrames;
-                }
-
-                if (_settleFrames > 0)
-                {
-                    CubemapController.UpdateCubemaps(true);
-                    _settleFrames--;
                     return;
                 }
 
-                CubemapController.UpdateCubemaps(false);
+                lastTick = Time.time;
+
+                var period = CubemapController.GetCurrentPeriod();
+                if (Changed())
+                {
+                    Cache();
+                    CubemapController.UpdateCubemaps(true);
+                    QueuePreload();
+                    lastPeriod = CubemapController.GetCurrentPeriod();
+                    return;
+                }
+
+                if (period != lastPeriod)
+                {
+                    CubemapController.UpdateCubemaps(true);
+                    lastPeriod = period;
+                }
             }
 
-            private IEnumerator Startup()
+            private void Cache()
             {
+                sunrise = Options.Current.SunriseCubemap;
+                day = Options.Current.DayCubemap;
+                sunset = Options.Current.SunsetCubemap;
+                night = Options.Current.NightCubemap;
+                useVanillaNight = Options.Current.UseVanillaNight;
+                fixNightHaze = Options.Current.FixNightHaze;
+            }
+
+            private bool Changed()
+            {
+                return sunrise != Options.Current.SunriseCubemap ||
+                    day != Options.Current.DayCubemap ||
+                    sunset != Options.Current.SunsetCubemap ||
+                    night != Options.Current.NightCubemap ||
+                    useVanillaNight != Options.Current.UseVanillaNight ||
+                    fixNightHaze != Options.Current.FixNightHaze;
+            }
+
+            public void Refresh()
+            {
+                Cache();
                 CubemapController.UpdateCubemaps(true);
+                QueuePreload();
+            }
 
-                var codes = new[]
+            private void QueuePreload()
+            {
+                if (preload != null)
                 {
-                    Options.Current.SunriseCubemap,
-                    Options.Current.DayCubemap,
-                    Options.Current.SunsetCubemap,
-                    Options.Current.NightCubemap,
-                };
+                    StopCoroutine(preload);
+                }
 
-                var periods = new[]
+                preload = StartCoroutine(Preload());
+            }
+
+            private IEnumerator Preload()
+            {
+                yield return null;
+                CubemapController.GetCubemap(CubemapController.DayPeriod.Sunrise);
+                yield return null;
+                CubemapController.GetCubemap(CubemapController.DayPeriod.Day);
+                yield return null;
+                CubemapController.GetCubemap(CubemapController.DayPeriod.Sunset);
+                yield return null;
+                CubemapController.GetCubemap(CubemapController.DayPeriod.Night);
+                preload = null;
+            }
+
+            public void OnDestroy()
+            {
+                if (_monitor == this)
                 {
-                    CubemapController.DayPeriod.Sunrise,
-                    CubemapController.DayPeriod.Day,
-                    CubemapController.DayPeriod.Sunset,
-                    CubemapController.DayPeriod.Night,
-                };
+                    _monitor = null;
+                }
 
-                for (var i = 0; i < codes.Length; i++)
+                CubemapController.Revert();
+            }
+        }
+    }
+
+    public static class LuminaFix
+    {
+        private const string Updater = "Lumina.CubemapUpdater";
+
+        private static Behaviour updater;
+
+        public static void Disable()
+        {
+            try
+            {
+                Type type = null;
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    yield return null;
-
-                    if (codes[i] != CubemapController.Vanilla)
+                    type = assembly.GetType(Updater);
+                    if (type != null)
                     {
-                        CubemapController.GetCubemap(periods[i]);
+                        break;
                     }
                 }
 
-                for (var i = 0; i < 60; i++)
+                if (type == null)
                 {
-                    yield return null;
-
-                    if (i == 5 || i == 20 || i == 59)
-                    {
-                        CubemapController.UpdateCubemaps(true);
-                    }
+                    return;
                 }
+
+                var property = type.GetProperty(
+                    "Instance",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                var instance = property == null ? null : property.GetValue(null, null) as Behaviour;
+                if (instance == null)
+                {
+                    instance = UnityEngine.Object.FindObjectOfType(type) as Behaviour;
+                }
+
+                if (instance != null && instance.enabled)
+                {
+                    instance.enabled = false;
+                    updater = instance;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("DynamicCubemaps: Failed to disable Lumina cubemap updater: " + e.Message);
+            }
+        }
+
+        public static void Restore()
+        {
+            try
+            {
+                if (updater != null)
+                {
+                    updater.enabled = true;
+                    updater = null;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("DynamicCubemaps: Failed to restore Lumina cubemap updater: " + e.Message);
             }
         }
     }

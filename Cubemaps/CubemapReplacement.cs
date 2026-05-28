@@ -13,48 +13,94 @@ namespace DynamicCubemaps
         [XmlAttribute("description")]
         public string Description { get; set; }
 
+        [XmlAttribute("timePeriod")]
+        public string TimePeriod { get; set; }
+
+        [XmlAttribute("isNight")]
+        public bool IsNight { get; set; }
+
+        [XmlAttribute("is_night")]
+        public bool IsNightLegacy
+        {
+            get { return IsNight; }
+            set { IsNight = value; }
+        }
+
+        [XmlAttribute("isSunset")]
+        public bool IsSunset { get; set; }
+
+        [XmlAttribute("is_sunset")]
+        public bool IsSunsetLegacy
+        {
+            get { return IsSunset; }
+            set { IsSunset = value; }
+        }
+
+        [XmlAttribute("isSunrise")]
+        public bool IsSunrise { get; set; }
+
+        [XmlAttribute("is_sunrise")]
+        public bool IsSunriseLegacy
+        {
+            get { return IsSunrise; }
+            set { IsSunrise = value; }
+        }
+
+        [XmlAttribute("isDay")]
+        public bool IsDay { get; set; }
+
+        [XmlAttribute("is_day")]
+        public bool IsDayLegacy
+        {
+            get { return IsDay; }
+            set { IsDay = value; }
+        }
+
+        [XmlAttribute("combined_texture")]
+        public string CombinedTexture { get; set; }
+
         [XmlAttribute("file_prefix")]
         public string FilePrefix { get; set; }
 
-        [XmlIgnore]
-        public string Dir { get; set; }
+        [XmlAttribute("is_split_format")]
+        public bool IsSplitFormat { get; set; }
 
-        private Cubemap _cubemap;
-        private bool _failed;
+        [XmlIgnore]
+        public string Directory { get; set; }
+
+        private Cubemap cubemap;
 
         public void DestroyCubemap()
         {
-            if (_cubemap != null)
+            if (cubemap != null)
             {
-                UnityEngine.Object.Destroy(_cubemap);
+                UnityEngine.Object.Destroy(cubemap);
+                cubemap = null;
             }
-
-            _cubemap = null;
-            _failed = false;
         }
 
         public Cubemap GetCubemap()
         {
-            if (_failed)
+            if (cubemap != null)
             {
-                return null;
-            }
-
-            if (_cubemap != null)
-            {
-                return _cubemap;
+                return cubemap;
             }
 
             Texture2D texture = null;
-            Cubemap cubemap = null;
             try
             {
-                if (string.IsNullOrEmpty(FilePrefix))
+                var file = CombinedTexture;
+                if (string.IsNullOrEmpty(file) && !string.IsNullOrEmpty(FilePrefix) && !IsSplitFormat)
                 {
-                    throw new InvalidOperationException("file_prefix is empty");
+                    file = FilePrefix + "cubemap.png";
                 }
 
-                var path = Path.Combine(Dir, FilePrefix + "cubemap.png");
+                if (string.IsNullOrEmpty(file))
+                {
+                    throw new InvalidOperationException("Combined texture file name is empty");
+                }
+
+                var path = Path.Combine(Directory, file);
                 if (!File.Exists(path))
                 {
                     throw new FileNotFoundException("Combined texture file not found", path);
@@ -84,24 +130,24 @@ namespace DynamicCubemaps
                 cubemap.name = $"DynamicCubemaps_{Code}";
                 cubemap.wrapMode = TextureWrapMode.Clamp;
 
-                ExtractFaces(texture, cubemap, size);
+                ExtractFaces(texture, size);
 
                 cubemap.anisoLevel = 9;
                 cubemap.filterMode = FilterMode.Trilinear;
                 cubemap.SmoothEdges();
-                cubemap.Apply(true, true);
+                cubemap.Apply();
 
-                _cubemap = cubemap;
-                return _cubemap;
+                return cubemap;
             }
             catch (Exception e)
             {
-                _failed = true;
-                Debug.LogError($"DynamicCubemaps: Failed to load cubemap {Code}: {e.Message}");
+                Debug.LogError($"Failed to load cubemap {Code}: {e.Message}");
+                Debug.LogException(e);
 
                 if (cubemap != null)
                 {
                     UnityEngine.Object.Destroy(cubemap);
+                    cubemap = null;
                 }
 
                 return null;
@@ -115,17 +161,17 @@ namespace DynamicCubemaps
             }
         }
 
-        private void ExtractFaces(Texture2D texture, Cubemap cubemap, int size)
+        private void ExtractFaces(Texture2D texture, int size)
         {
-            ExtractFace(texture, cubemap, CubemapFace.PositiveY, size, size * 2, size);
-            ExtractFace(texture, cubemap, CubemapFace.NegativeX, 0, size, size);
-            ExtractFace(texture, cubemap, CubemapFace.PositiveZ, size, size, size);
-            ExtractFace(texture, cubemap, CubemapFace.PositiveX, size * 2, size, size);
-            ExtractFace(texture, cubemap, CubemapFace.NegativeZ, size * 3, size, size);
-            ExtractFace(texture, cubemap, CubemapFace.NegativeY, size, 0, size);
+            ExtractFace(texture, CubemapFace.PositiveY, size, size * 2, size);
+            ExtractFace(texture, CubemapFace.NegativeX, 0, size, size);
+            ExtractFace(texture, CubemapFace.PositiveZ, size, size, size);
+            ExtractFace(texture, CubemapFace.PositiveX, size * 2, size, size);
+            ExtractFace(texture, CubemapFace.NegativeZ, size * 3, size, size);
+            ExtractFace(texture, CubemapFace.NegativeY, size, 0, size);
         }
 
-        private void ExtractFace(Texture2D texture, Cubemap cubemap, CubemapFace face, int startX, int startY, int size)
+        private void ExtractFace(Texture2D texture, CubemapFace face, int startX, int startY, int size)
         {
             Color[] pixels = texture.GetPixels(startX, startY, size, size);
             Color[] flipped = new Color[size * size];
@@ -136,15 +182,13 @@ namespace DynamicCubemaps
                 {
                     int src = y * size + x;
                     int dst = (size - 1 - y) * size + x;
-
+                    
                     if (face == CubemapFace.NegativeY)
                     {
                         dst = x * size + (size - 1 - y);
                     }
 
-                    var color = pixels[src];
-                    color.a = 1f;
-                    flipped[dst] = color;
+                    flipped[dst] = pixels[src];
                 }
             }
 

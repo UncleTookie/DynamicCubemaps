@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Xml.Serialization;
 using ColossalFramework;
 using ColossalFramework.Plugins;
@@ -18,21 +19,21 @@ namespace DynamicCubemaps
         public const float NightStart = 21.0f;
         private const float VisualHourOffset = 1.0f;
 
-        private static Cubemap _originalEnv;
-        private static Cubemap _originalSpace;
-        private static Cubemap _activeEnv;
-        private static RenderProperties _render;
-        private static DayNightProperties _dayNight;
-        private static FogEffect _classicFog;
-        private static bool _classicFogCaptured;
-        private static bool _classicFogEnabled;
-        private static bool _atmosphereCaptured;
-        private static bool _nightHazeApplied;
-        private static Color _horizonColor;
-        private static Color _originalFogColor;
-        private static Color _volFogColor;
-        private static Color _polluteFogColor;
-        private static Color _inscatteringColor;
+        private static Cubemap originalEnv;
+        private static Cubemap originalSpace;
+        private static Cubemap activeEnv;
+        private static RenderProperties capturedRender;
+        private static DayNightProperties capturedDayNight;
+        private static FogEffect classicFog;
+        private static bool classicFogCaptured;
+        private static bool classicFogEnabled;
+        private static bool atmosphereCaptured;
+        private static bool nightHazeApplied;
+        private static Color horizonColor;
+        private static Color originalFogColor;
+        private static Color volFogColor;
+        private static Color polluteFogColor;
+        private static Color inscatteringColor;
 
         private static readonly Color HazeHorizonColor = new Color(0.055f, 0.06f, 0.065f, 1f);
         private static readonly Color HazeFogColor = new Color(0.07f, 0.075f, 0.08f, 1f);
@@ -50,98 +51,115 @@ namespace DynamicCubemaps
 
         public static DayPeriod GetCurrentPeriod()
         {
-            var hour = GetCurrentHour();
-
-            if (hour >= NightStart || hour < SunriseStart)
-            {
-                return DayPeriod.Night;
-            }
-
-            if (hour >= SunsetStart)
-            {
-                return DayPeriod.Sunset;
-            }
-
-            return hour >= DayStart ? DayPeriod.Day : DayPeriod.Sunrise;
-        }
-
-        public static int GetCurrentHour()
-        {
-            var simulation = SimulationManager.instance;
-            var frame = (simulation.m_currentFrameIndex + simulation.m_dayTimeOffsetFrames) &
-                (SimulationManager.DAYTIME_FRAMES - 1);
-            var hour = frame * SimulationManager.DAYTIME_FRAME_TO_HOUR + VisualHourOffset;
+            var hour = SimulationManager.instance.m_currentDayTimeHour + VisualHourOffset;
             hour %= 24f;
             if (hour < 0f)
             {
                 hour += 24f;
             }
 
-            return Mathf.FloorToInt(hour);
+            var starts = new[] { SunriseStart, DayStart, SunsetStart, NightStart };
+            var periods = new[] { DayPeriod.Sunrise, DayPeriod.Day, DayPeriod.Sunset, DayPeriod.Night };
+            var selectedStart = float.MinValue;
+            var selectedPeriod = DayPeriod.Night;
+
+            for (var i = 0; i < starts.Length; i++)
+            {
+                var start = starts[i] <= hour ? starts[i] : starts[i] - 24f;
+                if (start >= selectedStart)
+                {
+                    selectedStart = start;
+                    selectedPeriod = periods[i];
+                }
+            }
+
+            return selectedPeriod;
         }
 
-        public static void UpdateCubemaps(bool force)
+        public static void UpdateCubemaps()
         {
-            if (!LoadingExtension.InGame || _dayNight == null)
+            UpdateCubemaps(false);
+        }
+
+        public static void UpdateCubemaps(bool forceRefresh)
+        {
+            if (!LoadingExtension.InGame)
             {
                 return;
             }
 
-            var period = GetCurrentPeriod();
-            var useVanillaNight = period == DayPeriod.Night && Options.Current.UseVanillaNight;
-            if (useVanillaNight)
+            var dayNight = UnityEngine.Object.FindObjectOfType<DayNightProperties>();
+            if (dayNight == null)
             {
-                UpdateNightHaze(false);
-                ApplyCubemap(_originalEnv, force);
-                UpdateClassicFog(true);
-            }
-            else
-            {
-                ApplyCubemap(GetCubemap(period), force);
-                UpdateNightHaze(period == DayPeriod.Night && Options.Current.FixNightHaze);
-                UpdateClassicFog(false);
+                Debug.LogError("DynamicCubemaps: DayNightProperties not found");
+                return;
             }
 
-            if (_originalSpace != null && _dayNight.m_OuterSpaceCubemap != _originalSpace)
+            var period = GetCurrentPeriod();
+            var render = UnityEngine.Object.FindObjectOfType<RenderProperties>();
+            var useVanillaNight = period == DayPeriod.Night && Options.Current.UseVanillaNight;
+            var env = useVanillaNight ? originalEnv : GetCubemap(period);
+            var space = period == DayPeriod.Night && !useVanillaNight ? env : originalSpace;
+
+            if (env != null)
             {
-                _dayNight.m_OuterSpaceCubemap = _originalSpace;
+                if (render != null && render.m_cubemap != env)
+                {
+                    render.m_cubemap = env;
+                }
+
+                if (forceRefresh || activeEnv != env)
+                {
+                    activeEnv = env;
+                    Shader.SetGlobalTexture("_EnvironmentCubemap", env);
+                }
             }
+
+            if (space != null && dayNight.m_OuterSpaceCubemap != space)
+            {
+                dayNight.m_OuterSpaceCubemap = space;
+            }
+
+            UpdateNightHaze(period == DayPeriod.Night && !useVanillaNight && Options.Current.FixNightHaze);
+            UpdateClassicFog(useVanillaNight);
         }
 
-        public static void Init()
+        public static void Initialize()
         {
-            _render = UnityEngine.Object.FindObjectOfType<RenderProperties>();
-            _dayNight = UnityEngine.Object.FindObjectOfType<DayNightProperties>();
-            _classicFog = UnityEngine.Object.FindObjectOfType<FogEffect>();
+            var render = UnityEngine.Object.FindObjectOfType<RenderProperties>();
+            var dayNight = UnityEngine.Object.FindObjectOfType<DayNightProperties>();
+            capturedRender = render;
+            capturedDayNight = dayNight;
+            classicFog = UnityEngine.Object.FindObjectOfType<FogEffect>();
 
-            if (_render != null && _originalEnv == null)
+            if (render != null && originalEnv == null)
             {
-                _originalEnv = _render.m_cubemap;
+                originalEnv = render.m_cubemap;
             }
 
-            if (_dayNight != null && _originalSpace == null)
+            if (dayNight != null && originalSpace == null)
             {
-                _originalSpace = _dayNight.m_OuterSpaceCubemap;
+                originalSpace = dayNight.m_OuterSpaceCubemap;
             }
 
-            if (!_classicFogCaptured && _classicFog != null)
+            if (!classicFogCaptured && classicFog != null)
             {
-                _classicFogEnabled = _classicFog.enabled;
-                _classicFogCaptured = true;
+                classicFogEnabled = classicFog.enabled;
+                classicFogCaptured = true;
             }
 
-            if (!_atmosphereCaptured && _render != null && _dayNight != null)
+            if (!atmosphereCaptured && render != null && dayNight != null)
             {
-                _horizonColor = _dayNight.m_NightHorizonColor;
-                _originalFogColor = _render.m_fogColor;
-                _volFogColor = _render.m_volumeFogColor;
-                _polluteFogColor = _render.m_pollutionFogColor;
-                _inscatteringColor = _render.m_inscatteringColor;
-                _atmosphereCaptured = true;
+                horizonColor = dayNight.m_NightHorizonColor;
+                originalFogColor = render.m_fogColor;
+                volFogColor = render.m_volumeFogColor;
+                polluteFogColor = render.m_pollutionFogColor;
+                inscatteringColor = render.m_inscatteringColor;
+                atmosphereCaptured = true;
             }
 
             CubemapManager.ResetCache();
-            CubemapManager.Import();
+            CubemapManager.ImportFromMods();
         }
 
         public static void Revert()
@@ -149,54 +167,72 @@ namespace DynamicCubemaps
             UpdateNightHaze(false);
             UpdateClassicFog(false);
 
-            if (_originalEnv != null)
+            var render = UnityEngine.Object.FindObjectOfType<RenderProperties>();
+            var dayNight = UnityEngine.Object.FindObjectOfType<DayNightProperties>();
+
+            if (originalEnv != null)
             {
-                if (_render != null)
+                if (render != null)
                 {
-                    _render.m_cubemap = _originalEnv;
+                    render.m_cubemap = originalEnv;
                 }
 
-                Shader.SetGlobalTexture("_EnvironmentCubemap", _originalEnv);
-                _activeEnv = _originalEnv;
+                Shader.SetGlobalTexture("_EnvironmentCubemap", originalEnv);
+                activeEnv = originalEnv;
             }
 
-            if (_dayNight != null && _originalSpace != null)
+            if (dayNight != null && originalSpace != null)
             {
-                _dayNight.m_OuterSpaceCubemap = _originalSpace;
-                _dayNight.Refresh();
+                dayNight.m_OuterSpaceCubemap = originalSpace;
+                dayNight.Refresh();
             }
         }
 
         public static void Release()
         {
-            _originalEnv = null;
-            _originalSpace = null;
-            _activeEnv = null;
-            _render = null;
-            _dayNight = null;
-            _classicFog = null;
-            _classicFogCaptured = false;
-            _atmosphereCaptured = false;
-            _nightHazeApplied = false;
+            originalEnv = null;
+            originalSpace = null;
+            activeEnv = null;
+            capturedRender = null;
+            capturedDayNight = null;
+            classicFog = null;
+            classicFogCaptured = false;
+            atmosphereCaptured = false;
+            nightHazeApplied = false;
+        }
+
+        private static Cubemap GetFallback()
+        {
+            if (originalEnv != null)
+            {
+                return originalEnv;
+            }
+
+            var render = UnityEngine.Object.FindObjectOfType<RenderProperties>();
+            return render != null ? render.m_cubemap : null;
         }
 
         public static Cubemap GetCubemap(DayPeriod period)
         {
             string code;
-            var fallback = _originalEnv ?? (_render != null ? _render.m_cubemap : null);
+            Cubemap fallback;
             switch (period)
             {
                 case DayPeriod.Sunrise:
                     code = Options.Current.SunriseCubemap;
+                    fallback = GetFallback();
                     break;
                 case DayPeriod.Day:
                     code = Options.Current.DayCubemap;
+                    fallback = GetFallback();
                     break;
                 case DayPeriod.Sunset:
                     code = Options.Current.SunsetCubemap;
+                    fallback = GetFallback();
                     break;
                 default:
                     code = Options.Current.NightCubemap;
+                    fallback = originalSpace;
                     break;
             }
 
@@ -205,127 +241,157 @@ namespace DynamicCubemaps
                 return fallback;
             }
 
-            var map = CubemapManager.Get(code);
-            return map == null ? fallback : map.GetCubemap() ?? fallback;
+            try
+            {
+                var replacement = CubemapManager.GetReplacement(period, code);
+                return replacement == null ? fallback : replacement.GetCubemap() ?? fallback;
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+                return fallback;
+            }
         }
 
         public static void ReloadCubemaps()
         {
+            Revert();
             CubemapManager.ResetCache();
-            CubemapManager.Import();
-            _activeEnv = null;
+            CubemapManager.ImportFromMods();
+            activeEnv = null;
             UpdateCubemaps(true);
-        }
-
-        private static void ApplyCubemap(Cubemap cubemap, bool force)
-        {
-            if (cubemap == null)
-            {
-                return;
-            }
-
-            var renderChanged = false;
-            if (_render != null && _render.m_cubemap != cubemap)
-            {
-                _render.m_cubemap = cubemap;
-                renderChanged = true;
-            }
-
-            if (force || renderChanged || _activeEnv != cubemap)
-            {
-                _activeEnv = cubemap;
-                Shader.SetGlobalTexture("_EnvironmentCubemap", cubemap);
-            }
         }
 
         private static void UpdateClassicFog(bool disable)
         {
-            if (!_classicFogCaptured || _classicFog == null)
+            if (!classicFogCaptured || classicFog == null)
             {
                 return;
             }
 
-            var enabled = !disable && _classicFogEnabled;
-            if (_classicFog.enabled != enabled)
+            var enabled = !disable && classicFogEnabled;
+            if (classicFog.enabled != enabled)
             {
-                _classicFog.enabled = enabled;
+                classicFog.enabled = enabled;
             }
         }
 
         private static void UpdateNightHaze(bool enabled)
         {
-            if (!_atmosphereCaptured || _render == null || _dayNight == null)
+            var render = capturedRender ?? UnityEngine.Object.FindObjectOfType<RenderProperties>();
+            var dayNight = capturedDayNight ?? UnityEngine.Object.FindObjectOfType<DayNightProperties>();
+            if (!atmosphereCaptured || render == null || dayNight == null)
             {
                 return;
             }
 
             if (enabled)
             {
-                _dayNight.m_NightHorizonColor = HazeHorizonColor;
-                _render.m_fogColor = HazeFogColor;
-                _render.m_volumeFogColor = HazeVolumeColor;
-                _render.m_pollutionFogColor = HazePollutionColor;
-                _render.m_inscatteringColor = HazeInscatteringColor;
-                Shader.SetGlobalColor("_EnvironmentFogColor", _render.m_fogColor);
-                _nightHazeApplied = true;
+                dayNight.m_NightHorizonColor = HazeHorizonColor;
+                render.m_fogColor = HazeFogColor;
+                render.m_volumeFogColor = HazeVolumeColor;
+                render.m_pollutionFogColor = HazePollutionColor;
+                render.m_inscatteringColor = HazeInscatteringColor;
+                Shader.SetGlobalColor("_EnvironmentFogColor", render.m_fogColor);
+                nightHazeApplied = true;
                 return;
             }
 
-            if (!_nightHazeApplied)
+            if (!nightHazeApplied)
             {
                 return;
             }
 
-            _dayNight.m_NightHorizonColor = _horizonColor;
-            _render.m_fogColor = _originalFogColor;
-            _render.m_volumeFogColor = _volFogColor;
-            _render.m_pollutionFogColor = _polluteFogColor;
-            _render.m_inscatteringColor = _inscatteringColor;
-            Shader.SetGlobalColor("_EnvironmentFogColor", _render.m_fogColor);
-            _nightHazeApplied = false;
+            dayNight.m_NightHorizonColor = horizonColor;
+            render.m_fogColor = originalFogColor;
+            render.m_volumeFogColor = volFogColor;
+            render.m_pollutionFogColor = polluteFogColor;
+            render.m_inscatteringColor = inscatteringColor;
+            Shader.SetGlobalColor("_EnvironmentFogColor", render.m_fogColor);
+            nightHazeApplied = false;
         }
     }
 
     public static class CubemapManager
     {
         private const string ConfigFile = "CubemapReplacements.xml";
-        private static bool _loaded;
+        private static bool loaded;
 
-        private static readonly Dictionary<string, CubemapReplacement> _cubemaps =
+        private static readonly Dictionary<string, CubemapReplacement> Sunrise =
+            new Dictionary<string, CubemapReplacement>();
+
+        private static readonly Dictionary<string, CubemapReplacement> Day =
+            new Dictionary<string, CubemapReplacement>();
+
+        private static readonly Dictionary<string, CubemapReplacement> Sunset =
+            new Dictionary<string, CubemapReplacement>();
+
+        private static readonly Dictionary<string, CubemapReplacement> Night =
             new Dictionary<string, CubemapReplacement>();
 
         public static void ResetCache()
         {
-            foreach (var cubemap in _cubemaps.Values)
+            Destroy(Sunrise);
+            Destroy(Day);
+            Destroy(Sunset);
+            Destroy(Night);
+
+            loaded = false;
+            Sunrise.Clear();
+            Day.Clear();
+            Sunset.Clear();
+            Night.Clear();
+        }
+
+        private static void Destroy(Dictionary<string, CubemapReplacement> group)
+        {
+            foreach (var cubemap in group.Values)
             {
                 cubemap.DestroyCubemap();
             }
-
-            _loaded = false;
-            _cubemaps.Clear();
         }
 
-        public static CubemapOption[] GetCubemaps()
+        public static CubemapOption[] GetSunriseCubemaps()
         {
-            Import();
+            return List(CubemapController.DayPeriod.Sunrise);
+        }
+
+        public static CubemapOption[] GetDayCubemaps()
+        {
+            return List(CubemapController.DayPeriod.Day);
+        }
+
+        public static CubemapOption[] GetSunsetCubemaps()
+        {
+            return List(CubemapController.DayPeriod.Sunset);
+        }
+
+        public static CubemapOption[] GetNightCubemaps()
+        {
+            return List(CubemapController.DayPeriod.Night);
+        }
+
+        private static CubemapOption[] List(CubemapController.DayPeriod period)
+        {
+            ImportFromMods();
             var entries = new List<CubemapOption>
             {
                 new CubemapOption(CubemapController.Vanilla, "Vanilla"),
             };
-            entries.AddRange(_cubemaps.Select(kvp => new CubemapOption(kvp.Key, kvp.Value.Description)));
+            entries.AddRange(GetGroup(period).Select(kvp => new CubemapOption(kvp.Key, kvp.Value.Description)));
             return entries.ToArray();
         }
 
-        public static CubemapReplacement Get(string code)
+        public static CubemapReplacement GetReplacement(CubemapController.DayPeriod period, string code)
         {
-            Import();
-            CubemapReplacement map;
-            return _cubemaps.TryGetValue(code, out map) ? map : null;
+            ImportFromMods();
+            CubemapReplacement replacement;
+            return GetGroup(period).TryGetValue(code, out replacement) ? replacement : null;
         }
 
-        public static void Import()
+        public static void ImportFromMods()
         {
-            if (_loaded)
+            if (loaded)
             {
                 return;
             }
@@ -334,129 +400,129 @@ namespace DynamicCubemaps
             var plugins = Singleton<PluginManager>.instance.GetPluginsInfo().ToArray();
             var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+            var assemblyDirectory = GetDirectoryPath(Assembly.GetExecutingAssembly().Location);
+            if (!string.IsNullOrEmpty(assemblyDirectory))
+            {
+                Import(assemblyDirectory, "Dynamic Cubemaps", seen);
+                AddWorkshopRoot(assemblyDirectory, roots);
+            }
+
+            foreach (var plugin in plugins.Where(plugin => plugin.isEnabled))
+            {
+                var pluginDirectory = GetDirectoryPath(plugin.modPath);
+                Import(pluginDirectory, plugin.name, seen);
+            }
+
             foreach (var plugin in plugins)
             {
-                if (string.IsNullOrEmpty(plugin.modPath))
+                var pluginDirectory = GetDirectoryPath(plugin.modPath);
+                if (string.IsNullOrEmpty(pluginDirectory))
                 {
                     continue;
                 }
 
-                var parent = Directory.GetParent(plugin.modPath);
-                if (parent != null && string.Equals(parent.Name, "255710", StringComparison.OrdinalIgnoreCase))
-                {
-                    roots.Add(parent.FullName);
-                }
-
-                if (File.Exists(Path.Combine(plugin.modPath, ConfigFile)) ||
-                    IsPack(plugin.name) ||
-                    IsPack(plugin.modPath))
-                {
-                    foreach (var xml in FindConfigFiles(plugin.modPath))
-                    {
-                        Import(Path.GetDirectoryName(xml), plugin.name, seen);
-                    }
-                }
+                AddWorkshopRoot(pluginDirectory, roots);
             }
 
-            var gameDir = Directory.GetParent(Application.dataPath);
-            var steamApps = gameDir != null && gameDir.Parent != null ? gameDir.Parent.Parent : null;
-            if (steamApps != null)
+            var gameDirectory = Directory.GetParent(Application.dataPath);
+            var steamAppsDirectory = gameDirectory != null && gameDirectory.Parent != null ? gameDirectory.Parent.Parent : null;
+            if (steamAppsDirectory != null)
             {
-                var workshop = Path.Combine(
+                var workshopRoot = Path.Combine(
                     Path.Combine(
-                        Path.Combine(steamApps.FullName, "workshop"),
+                        Path.Combine(steamAppsDirectory.FullName, "workshop"),
                         "content"),
                     "255710");
-                if (Directory.Exists(workshop))
+                if (Directory.Exists(workshopRoot))
                 {
-                    roots.Add(workshop);
+                    roots.Add(workshopRoot);
                 }
             }
 
             foreach (var root in roots)
             {
-                string[] dirs;
+                string[] directories;
                 try
                 {
-                    dirs = Directory.GetDirectories(root);
+                    directories = Directory.GetDirectories(root);
                 }
                 catch
                 {
                     continue;
                 }
 
-                foreach (var dir in dirs)
+                foreach (var directory in directories)
                 {
-                    foreach (var xml in FindConfigFiles(dir))
+                    if (File.Exists(Path.Combine(directory, ConfigFile)))
                     {
-                        Import(Path.GetDirectoryName(xml), Path.GetFileName(dir), seen);
+                        Import(directory, Path.GetFileName(directory), seen);
                     }
                 }
             }
 
-            _loaded = true;
+            loaded = true;
         }
 
-        private static IEnumerable<string> FindConfigFiles(string dir)
+        private static string GetDirectoryPath(string path)
         {
-            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            if (string.IsNullOrEmpty(path))
             {
-                yield break;
+                return null;
             }
 
-            var rootXml = Path.Combine(dir, ConfigFile);
-            if (File.Exists(rootXml))
-            {
-                yield return rootXml;
-                yield break;
-            }
-
-            string[] subdirs;
             try
             {
-                subdirs = Directory.GetDirectories(dir);
+                if (Directory.Exists(path))
+                {
+                    return Path.GetFullPath(path);
+                }
+
+                var directory = Path.GetDirectoryName(path);
+                return string.IsNullOrEmpty(directory) ? null : Path.GetFullPath(directory);
             }
             catch
             {
-                yield break;
+                return null;
             }
+        }
 
-            foreach (var subdir in subdirs)
+        private static void AddWorkshopRoot(string path, HashSet<string> roots)
+        {
+            try
             {
-                var subdirXml = Path.Combine(subdir, ConfigFile);
-                if (File.Exists(subdirXml))
+                var directory = new DirectoryInfo(path);
+                while (directory != null)
                 {
-                    yield return subdirXml;
+                    if (string.Equals(directory.Name, "255710", StringComparison.OrdinalIgnoreCase) &&
+                        directory.Parent != null &&
+                        string.Equals(directory.Parent.Name, "content", StringComparison.OrdinalIgnoreCase))
+                    {
+                        roots.Add(directory.FullName);
+                        return;
+                    }
+
+                    directory = directory.Parent;
                 }
             }
-        }
-
-        private static bool IsPack(string value)
-        {
-            if (string.IsNullOrEmpty(value))
+            catch
             {
-                return false;
             }
-
-            return value.IndexOf("hdri", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                value.IndexOf("cubemap", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                value.IndexOf("skybox", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private static void Import(string dir, string src, HashSet<string> seen)
+        private static void Import(string directory, string source, HashSet<string> seen)
         {
-            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir))
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
             {
                 return;
             }
 
-            var path = Path.GetFullPath(dir);
-            if (!seen.Add(path))
+            var dir = Path.GetFullPath(directory);
+            if (!seen.Add(dir))
             {
                 return;
             }
 
-            var xml = Path.Combine(path, ConfigFile);
+            var xml = Path.Combine(dir, ConfigFile);
             if (!File.Exists(xml))
             {
                 return;
@@ -464,70 +530,93 @@ namespace DynamicCubemaps
 
             try
             {
-                var maps = ReadConfig(xml);
-                foreach (var map in maps)
+                var serializer = new XmlSerializer(typeof(ReplacementConfig));
+                ReplacementConfig config;
+                using (var stream = new FileStream(xml, FileMode.Open))
                 {
-                    Add(src, path, map);
+                    config = serializer.Deserialize(stream) as ReplacementConfig;
+                }
+
+                if (config != null)
+                {
+                    foreach (var replacement in config.AllReplacements)
+                    {
+                        Add(source, dir, replacement);
+                    }
                 }
             }
             catch (Exception e)
             {
-                Debug.LogError(
-                    "DynamicCubemaps: Error while parsing CubemapReplacements.xml of " + src + ": " + e.Message);
+                Debug.LogError("DynamicCubemaps: Error while parsing CubemapReplacements.xml of " + source);
+                Debug.LogException(e);
             }
         }
 
-        private static List<CubemapReplacement> ReadConfig(string xml)
+        private static void Add(string source, string dir, CubemapReplacement cubemap)
         {
-            using (var stream = new FileStream(xml, FileMode.Open))
-            {
-                var serializer = new XmlSerializer(typeof(Config));
-                var config = serializer.Deserialize(stream) as Config;
-                return config == null || config.Maps == null ? new List<CubemapReplacement>() : config.Maps;
-            }
-        }
-
-        private static void Add(string src, string dir, CubemapReplacement map)
-        {
-            var code = map.Code == null ? null : map.Code.Trim();
-            var desc = map.Description == null ? null : map.Description.Trim();
+            var code = cubemap.Code == null ? null : cubemap.Code.Trim();
+            var description = cubemap.Description == null ? null : cubemap.Description.Trim();
 
             if (string.IsNullOrEmpty(code))
             {
-                LogInvalidConfig(src, "replacement code is empty");
+                Debug.LogError("DynamicCubemaps: Invalid CubemapReplacements.xml of " + source + ": replacement code is empty!");
                 return;
             }
 
-            if (string.IsNullOrEmpty(desc))
+            if (string.IsNullOrEmpty(description))
             {
-                LogInvalidConfig(src, "replacement description is empty");
+                Debug.LogError("DynamicCubemaps: Invalid CubemapReplacements.xml of " + source + ": replacement description is empty!");
                 return;
             }
 
-            map.Code = code;
-            map.Description = desc;
-            map.Dir = dir;
+            cubemap.Code = code;
+            cubemap.Description = description;
+            cubemap.Directory = dir;
 
-            if (_cubemaps.ContainsKey(map.Code))
-            {
-                LogInvalidConfig(src, "replacement code is already present");
-                return;
-            }
-
-            _cubemaps.Add(map.Code, map);
+            Add(source, GetGroup(CubemapController.DayPeriod.Sunrise), cubemap);
+            Add(source, GetGroup(CubemapController.DayPeriod.Day), cubemap);
+            Add(source, GetGroup(CubemapController.DayPeriod.Sunset), cubemap);
+            Add(source, GetGroup(CubemapController.DayPeriod.Night), cubemap);
         }
 
-        private static void LogInvalidConfig(string src, string reason)
+        private static void Add(string source, Dictionary<string, CubemapReplacement> group, CubemapReplacement cubemap)
         {
-            Debug.LogError("DynamicCubemaps: Invalid CubemapReplacements.xml of " + src + ": " + reason + "!");
+            if (group.ContainsKey(cubemap.Code))
+            {
+                Debug.LogError("DynamicCubemaps: Invalid CubemapReplacements.xml of " + source + ": replacement code is already present!");
+                return;
+            }
+
+            group.Add(cubemap.Code, cubemap);
+        }
+
+        private static Dictionary<string, CubemapReplacement> GetGroup(CubemapController.DayPeriod period)
+        {
+            switch (period)
+            {
+                case CubemapController.DayPeriod.Sunrise:
+                    return Sunrise;
+                case CubemapController.DayPeriod.Day:
+                    return Day;
+                case CubemapController.DayPeriod.Sunset:
+                    return Sunset;
+                default:
+                    return Night;
+            }
         }
 
         [XmlRoot("CubemapReplacementsConfig")]
-        public class Config
+        public class ReplacementConfig
         {
             [XmlArray("CubemapReplacements")]
             [XmlArrayItem("CubemapReplacement")]
-            public List<CubemapReplacement> Maps { get; set; } = new List<CubemapReplacement>();
+            public List<CubemapReplacement> LegacyReplacements { get; set; } = new List<CubemapReplacement>();
+
+            [XmlIgnore]
+            public IEnumerable<CubemapReplacement> AllReplacements
+            {
+                get { return LegacyReplacements; }
+            }
         }
     }
 
