@@ -9,8 +9,7 @@ namespace DynamicCubemaps
     public class LoadingExtension : LoadingExtensionBase
     {
         private GameObject _gameObject;
-        private static CubemapMonitor _monitor;
-        public static bool InGame = false;
+        public static bool inGame = false;
 
         public override void OnLevelLoaded(LoadMode mode)
         {
@@ -21,25 +20,22 @@ namespace DynamicCubemaps
                 return;
             }
 
-            InGame = true;
+            inGame = true;
 
-            CubemapController.Initialize();
+            DynamicCubemaps.Initialize();
             LuminaFix.Disable();
 
             _gameObject = new GameObject("DynamicCubemaps");
             _gameObject.AddComponent<CubemapMonitor>();
 
-            CubemapController.UpdateCubemaps();
+            DynamicCubemaps.UpdateCubemaps();
         }
 
         public override void OnLevelUnloading()
         {
-            InGame = false;
-            CubemapController.Revert();
+            inGame = false;
+            DynamicCubemaps.Revert();
             LuminaFix.Restore();
-            CubemapManager.ResetCache();
-            CubemapController.Release();
-            _monitor = null;
 
             if (_gameObject != null)
             {
@@ -48,45 +44,33 @@ namespace DynamicCubemaps
             }
         }
 
-        public static void RefreshCubemaps()
-        {
-            if (_monitor != null)
-            {
-                _monitor.Refresh();
-            }
-            else
-            {
-                CubemapController.UpdateCubemaps(true);
-            }
-        }
-
         public class CubemapMonitor : MonoBehaviour
         {
             private const float UpdateInterval = 0.1f;
 
             private float lastTick;
-            private CubemapController.DayPeriod lastPeriod;
+            private DynamicCubemaps.DayPeriod lastPeriod;
             private string sunrise;
             private string day;
             private string sunset;
             private string night;
-            private bool useVanillaNight;
             private bool fixNightHaze;
             private Coroutine preload;
+            private bool wasPaused;
 
             public void Start()
             {
-                _monitor = this;
                 Cache();
-                lastPeriod = CubemapController.GetCurrentPeriod();
+                lastPeriod = DynamicCubemaps.GetCurrentPeriod();
+                wasPaused = SimulationManager.instance.SimulationPaused;
 
-                CubemapController.UpdateCubemaps();
+                DynamicCubemaps.UpdateCubemaps();
                 QueuePreload();
             }
 
             public void LateUpdate()
             {
-                if (!InGame)
+                if (!inGame)
                 {
                     return;
                 }
@@ -98,19 +82,23 @@ namespace DynamicCubemaps
 
                 lastTick = Time.time;
 
-                var period = CubemapController.GetCurrentPeriod();
+                var period = DynamicCubemaps.GetCurrentPeriod();
+                var isPaused = SimulationManager.instance.SimulationPaused;
+                var resumed = wasPaused && !isPaused;
+                wasPaused = isPaused;
+
                 if (Changed())
                 {
                     Cache();
-                    CubemapController.UpdateCubemaps(true);
+                    DynamicCubemaps.UpdateCubemaps(true);
                     QueuePreload();
-                    lastPeriod = CubemapController.GetCurrentPeriod();
+                    lastPeriod = DynamicCubemaps.GetCurrentPeriod();
                     return;
                 }
 
-                if (period != lastPeriod)
+                if (resumed || period != lastPeriod)
                 {
-                    CubemapController.UpdateCubemaps(true);
+                    DynamicCubemaps.UpdateCubemaps(true);
                     lastPeriod = period;
                 }
             }
@@ -121,7 +109,6 @@ namespace DynamicCubemaps
                 day = Options.Current.DayCubemap;
                 sunset = Options.Current.SunsetCubemap;
                 night = Options.Current.NightCubemap;
-                useVanillaNight = Options.Current.UseVanillaNight;
                 fixNightHaze = Options.Current.FixNightHaze;
             }
 
@@ -131,15 +118,7 @@ namespace DynamicCubemaps
                     day != Options.Current.DayCubemap ||
                     sunset != Options.Current.SunsetCubemap ||
                     night != Options.Current.NightCubemap ||
-                    useVanillaNight != Options.Current.UseVanillaNight ||
                     fixNightHaze != Options.Current.FixNightHaze;
-            }
-
-            public void Refresh()
-            {
-                Cache();
-                CubemapController.UpdateCubemaps(true);
-                QueuePreload();
             }
 
             private void QueuePreload()
@@ -155,24 +134,19 @@ namespace DynamicCubemaps
             private IEnumerator Preload()
             {
                 yield return null;
-                CubemapController.GetCubemap(CubemapController.DayPeriod.Sunrise);
+                DynamicCubemaps.GetCubemap(DynamicCubemaps.DayPeriod.Sunrise);
                 yield return null;
-                CubemapController.GetCubemap(CubemapController.DayPeriod.Day);
+                DynamicCubemaps.GetCubemap(DynamicCubemaps.DayPeriod.Day);
                 yield return null;
-                CubemapController.GetCubemap(CubemapController.DayPeriod.Sunset);
+                DynamicCubemaps.GetCubemap(DynamicCubemaps.DayPeriod.Sunset);
                 yield return null;
-                CubemapController.GetCubemap(CubemapController.DayPeriod.Night);
+                DynamicCubemaps.GetCubemap(DynamicCubemaps.DayPeriod.Night);
                 preload = null;
             }
 
             public void OnDestroy()
             {
-                if (_monitor == this)
-                {
-                    _monitor = null;
-                }
-
-                CubemapController.Revert();
+                DynamicCubemaps.Revert();
             }
         }
     }

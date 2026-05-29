@@ -1,9 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <CubemapReplacementsConfig>
-  <CubemapReplacements>
-    <CubemapReplacement code="example_sunrise" description="Example Sunrise Skybox" file_prefix="Textures/sunrise_" />
-    <CubemapReplacement code="example_day" description="Example Day Skybox" file_prefix="Textures/day_" />
-    <CubemapReplacement code="example_sunset" description="Example Sunset Skybox" file_prefix="Textures/sunset_" />
-    <CubemapReplacement code="example_night" description="Example Night Skybox" file_prefix="Textures/night_" />
-  </CubemapReplacements>
+  <replacements>
+    <replacement code="example_sunrise" description="Example Sunrise Skybox" timePeriod="sunrise"
+                 combined_texture="Textures/sunrise_combined.png" />
+    
+    <replacement code="example_day" description="Example Day Skybox" timePeriod="day"
+                combined_texture="Textures/day_combined.png" />
+                
+    <replacement code="example_sunset" description="Example Sunset Skybox" timePeriod="sunset"
+                combined_texture="Textures/sunset_combined.png" />
+                
+    <replacement code="example_night" description="Example Night Skybox" timePeriod="night"
+                 combined_texture="Textures/night_combined.png" />
+  </replacements>
 </CubemapReplacementsConfig>

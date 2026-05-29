@@ -33,19 +33,16 @@ namespace DynamicCubemaps
         }
 
         [XmlElement("sunriseCubemap")]
-        public string SunriseCubemap { get; set; } = CubemapController.Vanilla;
+        public string SunriseCubemap { get; set; } = DynamicCubemaps.Vanilla;
 
         [XmlElement("dayCubemap")]
-        public string DayCubemap { get; set; } = CubemapController.Vanilla;
+        public string DayCubemap { get; set; } = DynamicCubemaps.Vanilla;
 
         [XmlElement("sunsetCubemap")]
-        public string SunsetCubemap { get; set; } = CubemapController.Vanilla;
+        public string SunsetCubemap { get; set; } = DynamicCubemaps.Vanilla;
 
         [XmlElement("nightCubemap")]
-        public string NightCubemap { get; set; } = CubemapController.Vanilla;
-
-        [XmlElement("useVanillaNight")]
-        public bool UseVanillaNight { get; set; }
+        public string NightCubemap { get; set; } = DynamicCubemaps.Vanilla;
 
         [XmlElement("fixNightHaze")]
         public bool FixNightHaze { get; set; }
@@ -91,8 +88,7 @@ namespace DynamicCubemaps
             var day = Current.DayCubemap;
             var sunset = Current.SunsetCubemap;
             var night = Current.NightCubemap;
-            var useVanillaNight = Current.UseVanillaNight;
-            var fixNightHaze = Current.FixNightHaze && !useVanillaNight;
+            var fixNightHaze = Current.FixNightHaze;
 
             Dropdown(
                 leftColumn,
@@ -134,39 +130,13 @@ namespace DynamicCubemaps
                     night = value;
                 });
 
-            UICheckBox vanillaNightToggle = null;
-            UICheckBox nightHazeToggle = null;
-            vanillaNightToggle = group.AddCheckbox(
-                "Use vanilla mode at night",
-                useVanillaNight,
-                value =>
-                {
-                    useVanillaNight = value;
-                    if (value)
-                    {
-                        fixNightHaze = false;
-                        if (nightHazeToggle != null)
-                        {
-                            nightHazeToggle.isChecked = false;
-                        }
-                    }
-                }) as UICheckBox;
-
-            nightHazeToggle = group.AddCheckbox(
+            group.AddCheckbox(
                 "Disable horizon haze at night",
                 fixNightHaze,
                 value =>
                 {
                     fixNightHaze = value;
-                    if (value)
-                    {
-                        useVanillaNight = false;
-                        if (vanillaNightToggle != null)
-                        {
-                            vanillaNightToggle.isChecked = false;
-                        }
-                    }
-                }) as UICheckBox;
+                });
 
             var actions = helper.AddGroup("Actions");
             var actionsHelper = actions as UIHelper;
@@ -189,18 +159,12 @@ namespace DynamicCubemaps
                 Current.DayCubemap = day;
                 Current.SunsetCubemap = sunset;
                 Current.NightCubemap = night;
-                Current.UseVanillaNight = useVanillaNight;
-                Current.FixNightHaze = fixNightHaze && !useVanillaNight;
+                Current.FixNightHaze = fixNightHaze;
                 Save(Current);
-                CubemapController.UpdateCubemaps(true);
-                LoadingExtension.RefreshCubemaps();
+                DynamicCubemaps.UpdateCubemaps(true);
             });
 
-            actions.AddButton("Reload Cubemaps", () =>
-            {
-                CubemapController.ReloadCubemaps();
-                LoadingExtension.RefreshCubemaps();
-            });
+            actions.AddButton("Reload Cubemaps", DynamicCubemaps.ReloadCubemaps);
         }
 
         private static void Dropdown(UIHelperBase group, string label, CubemapOption[] options, string selectedCode, Action<string> onChanged)
@@ -240,7 +204,6 @@ namespace DynamicCubemaps
                 using (var streamReader = new StreamReader(path))
                 {
                     var options = serializer.Deserialize(streamReader) as Options ?? new Options();
-                    options.FixNightHaze = options.FixNightHaze && !options.UseVanillaNight;
                     return options;
                 }
             }
